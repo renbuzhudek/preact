@@ -1,4 +1,4 @@
-import { Fragment } from 'preact';
+import { Component, Fragment } from 'preact';
 
 /**
  * Get the type/category of a vnode
@@ -49,7 +49,7 @@ export function getData(vnode) {
 	/** @type {import('../internal').DevtoolsUpdater | null} */
 	let updater = null;
 
-	if (c!=null) {
+	if (c!=null && c instanceof Component) {
 		// These functions will be called when the user changes state, props or
 		// context values via the devtools ui panel
 		updater = {
@@ -82,13 +82,13 @@ export function getData(vnode) {
 		ref: vnode.ref || null,
 		key: vnode.key || null,
 		updater,
-		text: vnode.text,
-		state: c!=null ? c.state : null,
+		text: vnode.type===null ? vnode.props : null,
+		state: c!=null && c instanceof Component ? c.state : null,
 		props: vnode.props,
 		// The devtools inline text children if they are the only child
-		children: vnode.text==null
-			? children!=null && children.length==1 && children[0].text!=null
-				? children[0].text
+		children: vnode.type!==null
+			? children!=null && children.length==1 && children[0].type===null
+				? children[0].props
 				: children
 			: null,
 		publicInstance: getInstance(vnode),
@@ -108,15 +108,11 @@ export function getData(vnode) {
  * @returns {import('../internal').VNode[]}
  */
 export function getChildren(vnode) {
-	let c = vnode._component;
-
-	if (c==null) {
+	if (vnode._component==null) {
 		return vnode._children!=null ? vnode._children.filter(Boolean) : [];
 	}
 
-	return !Array.isArray(c._prevVNode) && c._prevVNode!=null
-		? [c._prevVNode]
-		: null;
+	return vnode._children != null ? vnode._children.filter(Boolean) : null;
 }
 
 /**
@@ -145,7 +141,7 @@ export function getInstance(vnode) {
 	if (isRoot(vnode)) {
 		// Edge case: When the tree only consists of components that have not rendered
 		// anything into the DOM we revert to using the vnode as instance.
-		return vnode._children.length > 0 && vnode._children[0]._dom!=null
+		return vnode._children.length > 0 && vnode._children[0]!=null && vnode._children[0]._dom!=null
 			? /** @type {import('../internal').PreactElement | null} */
 			(vnode._children[0]._dom.parentNode)
 			: vnode;
@@ -186,14 +182,4 @@ export function hasDataChanged(prev, next) {
 			!shallowEqual(next._component._prevState, next._component.state))
 		|| prev._dom !== next._dom
 		|| prev.ref !== next.ref;
-}
-
-/**
- * Check if a the profiling data ahs changed between vnodes
- * @param {import('../internal').VNode} next
- * @param {import('../internal').VNode} prev
- * @returns {boolean}
- */
-export function hasProfileDataChanged(prev, next) {
-	return prev.startTime!==next.startTime || prev.endTime!==next.endTime;
 }

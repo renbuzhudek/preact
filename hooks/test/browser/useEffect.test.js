@@ -1,6 +1,5 @@
-import { setupRerender } from 'preact/test-utils';
+import { act } from 'preact/test-utils';
 import { createElement as h, render } from 'preact';
-import { spy } from 'sinon';
 import { setupScratch, teardown } from '../../../test/_util/helpers';
 import { useEffect } from '../../src';
 import { useEffectAssertions } from './useEffectAssertions.test';
@@ -14,12 +13,8 @@ describe('useEffect', () => {
 	/** @type {HTMLDivElement} */
 	let scratch;
 
-	/** @type {() => void} */
-	let rerender;
-
 	beforeEach(() => {
 		scratch = setupScratch();
-		rerender = setupRerender();
 	});
 
 	afterEach(() => {
@@ -30,8 +25,8 @@ describe('useEffect', () => {
 
 
 	it('calls the effect immediately if another render is about to start', () => {
-		const cleanupFunction = spy();
-		const callback = spy(() => cleanupFunction);
+		const cleanupFunction = sinon.spy();
+		const callback = sinon.spy(() => cleanupFunction);
 
 		function Comp() {
 			useEffect(callback);
@@ -51,8 +46,8 @@ describe('useEffect', () => {
 	});
 
 	it('cancels the effect when the component get unmounted before it had the chance to run it', () => {
-		const cleanupFunction = spy();
-		const callback = spy(() => cleanupFunction);
+		const cleanupFunction = sinon.spy();
+		const callback = sinon.spy(() => cleanupFunction);
 
 		function Comp() {
 			useEffect(callback);
@@ -66,5 +61,24 @@ describe('useEffect', () => {
 			expect(cleanupFunction).to.not.be.called;
 			expect(callback).to.not.be.called;
 		});
+	});
+
+	it('Should execute effects in the right order', () => {
+		let executionOrder = [];
+		const App = ({ i }) => {
+			executionOrder = [];
+			useEffect(() => {
+				executionOrder.push('action1');
+				return () => executionOrder.push('cleanup1');
+			}, [i]);
+			useEffect(() => {
+				executionOrder.push('action2');
+				return () => executionOrder.push('cleanup2');
+			}, [i]);
+			return <p>Test</p>;
+		};
+		act(() => render(<App i={0} />, scratch));
+		act(() => render(<App i={2} />, scratch));
+		expect(executionOrder).to.deep.equal(['cleanup1', 'cleanup2', 'action1', 'action2']);
 	});
 });

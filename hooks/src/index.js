@@ -9,18 +9,17 @@ let currentComponent;
 /** @type {Array<import('./internal').Component>} */
 let afterPaintEffects = [];
 
-let oldBeforeRender = options.render;
-options.render = vnode => {
+let oldBeforeRender = options._render;
+options._render = vnode => {
 	if (oldBeforeRender) oldBeforeRender(vnode);
 
 	currentComponent = vnode._component;
 	currentIndex = 0;
 
-	if (!currentComponent.__hooks) return;
-	currentComponent.__hooks._pendingEffects.forEach(invokeEffect);
-	currentComponent.__hooks._pendingEffects = [];
+	if (currentComponent.__hooks) {
+		currentComponent.__hooks._pendingEffects = handleEffects(currentComponent.__hooks._pendingEffects);
+	}
 };
-
 
 let oldAfterDiff = options.diffed;
 options.diffed = vnode => {
@@ -30,12 +29,9 @@ options.diffed = vnode => {
 	if (!c) return;
 
 	const hooks = c.__hooks;
-	if (!hooks) return;
-
-	// TODO: Consider moving to a global queue. May need to move
-	// this to the `commit` option
-	hooks._pendingLayoutEffects.forEach(invokeEffect);
-	hooks._pendingLayoutEffects = [];
+	if (hooks) {
+		hooks._pendingLayoutEffects = handleEffects(hooks._pendingLayoutEffects);
+	}
 };
 
 
@@ -47,9 +43,9 @@ options.unmount = vnode => {
 	if (!c) return;
 
 	const hooks = c.__hooks;
-	if (!hooks) return;
-
-	hooks._list.forEach(hook => hook._cleanup && hook._cleanup());
+	if (hooks) {
+		hooks._list.forEach(hook => hook._cleanup && hook._cleanup());
+	}
 };
 
 /**
@@ -58,12 +54,12 @@ options.unmount = vnode => {
  * @returns {import('./internal').HookState}
  */
 function getHookState(index) {
+	if (options._hook) options._hook(currentComponent);
 	// Largely inspired by:
-	// * https://github.com/michael-klein/funcy.js/blob/master/src/hooks/core_hooks.mjs
-	// * https://github.com/michael-klein/funcy.js/blob/master/src/lib/renderer.mjs
+	// * https://github.com/michael-klein/funcy.js/blob/f6be73468e6ec46b0ff5aa3cc4c9baf72a29025a/src/hooks/core_hooks.mjs
+	// * https://github.com/michael-klein/funcy.js/blob/650beaa58c43c33a74820a3c98b3c7079cf2e333/src/renderer.mjs
 	// Other implementations to look at:
 	// * https://codesandbox.io/s/mnox05qp8
-
 	const hooks = currentComponent.__hooks || (currentComponent.__hooks = { _list: [], _pendingEffects: [], _pendingLayoutEffects: [] });
 
 	if (index >= hooks._list.length) {
@@ -80,15 +76,18 @@ export function useReducer(reducer, initialState, init) {
 
 	/** @type {import('./internal').ReducerHookState} */
 	const hookState = getHookState(currentIndex++);
-	if (hookState._component == null) {
+	if (!hookState._component) {
 		hookState._component = currentComponent;
 
 		hookState._value = [
-			init == null ? invokeOrReturn(null, initialState) : init(initialState),
+			!init ? invokeOrReturn(null, initialState) : init(initialState),
 
 			action => {
-				hookState._value[0] = reducer(hookState._value[0], action);
-				hookState._component.setState({});
+				const nextValue = reducer(hookState._value[0], action);
+				if (hookState._value[0]!==nextValue) {
+					hookState._value[0] = nextValue;
+					hookState._component.setState({});
+				}
 			}
 		];
 	}
@@ -124,18 +123,22 @@ export function useLayoutEffect(callback, args) {
 	if (argsChanged(state._args, args)) {
 		state._value = callback;
 		state._args = args;
-
 		currentComponent.__hooks._pendingLayoutEffects.push(state);
 	}
 }
 
 export function useRef(initialValue) {
-	const state = getHookState(currentIndex++);
-	if (state._value == null) {
-		state._value = { current: initialValue };
-	}
+	return useMemo(() => ({ current: initialValue }), []);
+}
 
-	return state._value;
+export function useImperativeHandle(ref, createHandle, args) {
+	const state = getHookState(currentIndex++);
+	if (argsChanged(state._args, args)) {
+		state._args = args;
+		if (ref) {
+			ref.current = createHandle();
+		}
+	}
 }
 
 /**
@@ -168,13 +171,24 @@ export function useCallback(callback, args) {
  */
 export function useContext(context) {
 	const provider = currentComponent.context[context._id];
-	if (provider == null) return context._defaultValue;
+	if (!provider) return context._defaultValue;
 	const state = getHookState(currentIndex++);
+	// This is probably not safe to convert to "!"
 	if (state._value == null) {
 		state._value = true;
 		provider.sub(currentComponent);
 	}
 	return provider.props.value;
+}
+
+/**
+ * Display a custom label for a custom hook for the devtools panel
+ * @type {<T>(value: T, cb?: (value: T) => string | number) => void}
+ */
+export function useDebugValue(value, formatter) {
+	if (options.useDebugValue) {
+		options.useDebugValue(formatter ? formatter(value) : value);
+	}
 }
 
 // Note: if someone used Component.debounce = requestAnimationFrame,
@@ -184,25 +198,27 @@ export function useContext(context) {
  * Invoke a component's pending effects after the next frame renders
  * @type {(component: import('./internal').Component) => void}
  */
+/* istanbul ignore next */
 let afterPaint = () => {};
 
 /**
  * After paint effects consumer.
  */
 function flushAfterPaintEffects() {
-	afterPaintEffects.forEach(component => {
+	afterPaintEffects.some(component => {
 		component._afterPaintQueued = false;
-		if (!component._parentDom) return;
-		component.__hooks._pendingEffects.forEach(invokeEffect);
-		component.__hooks._pendingEffects = [];
+		if (component._parentDom) {
+			component.__hooks._pendingEffects = handleEffects(component.__hooks._pendingEffects);
+		}
 	});
 	afterPaintEffects = [];
 }
 
 function scheduleFlushAfterPaint() {
-	setTimeout(flushAfterPaintEffects, 0);
+	setTimeout(flushAfterPaintEffects);
 }
 
+/* istanbul ignore else */
 if (typeof window !== 'undefined') {
 	afterPaint = (component) => {
 		if (!component._afterPaintQueued && (component._afterPaintQueued = true) && afterPaintEffects.push(component) === 1) {
@@ -217,18 +233,27 @@ if (typeof window !== 'undefined') {
 	};
 }
 
+function handleEffects(effects) {
+	effects.forEach(invokeCleanup);
+	effects.forEach(invokeEffect);
+	return [];
+}
+
+function invokeCleanup(hook) {
+	if (hook._cleanup) hook._cleanup();
+}
+
 /**
  * Invoke a Hook's effect
  * @param {import('./internal').EffectHookState} hook
  */
 function invokeEffect(hook) {
-	if (hook._cleanup) hook._cleanup();
 	const result = hook._value();
 	if (typeof result === 'function') hook._cleanup = result;
 }
 
 function argsChanged(oldArgs, newArgs) {
-	return oldArgs == null || newArgs.some((arg, index) => arg !== oldArgs[index]);
+	return !oldArgs || newArgs.some((arg, index) => arg !== oldArgs[index]);
 }
 
 function invokeOrReturn(arg, f) {

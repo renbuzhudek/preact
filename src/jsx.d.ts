@@ -7,7 +7,7 @@ type Defaultize<Props, Defaults> =
 			& Pick<Props, Exclude<keyof Props, keyof Defaults>>
 		: never;
 
-declare namespace JSX {
+export namespace JSXInternal {
 
 	type LibraryManagedAttributes<Component, Props> =
 	Component extends { defaultProps: infer Defaults }
@@ -601,7 +601,7 @@ declare namespace JSX {
 		srcSet?: string;
 		start?: number;
 		step?: number | string;
-		style?: any;
+		style?: {[key: string]: string | number};
 		summary?: string;
 		tabIndex?: number;
 		target?: string;
@@ -622,6 +622,13 @@ declare namespace JSX {
 		resource?: string;
 		typeof?: string;
 		vocab?: string;
+
+		// Microdata Attributes
+		itemProp?: string;
+		itemScope?: boolean;
+		itemType?: string;
+		itemID?: string;
+		itemRef?: string;
 	}
 
 	interface IntrinsicElements {

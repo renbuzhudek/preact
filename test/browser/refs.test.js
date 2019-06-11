@@ -35,7 +35,7 @@ describe('refs', () => {
 		expect(r.current).to.equal(undefined);
 
 		render(<div ref={r} />, scratch);
-		expect(r.current).to.equal(scratch.firstChild);
+		expect(r.current).to.equalNode(scratch.firstChild);
 	});
 
 	it('should invoke refs in Component.render()', () => {
@@ -83,7 +83,7 @@ describe('refs', () => {
 
 		ref.resetHistory();
 		render(<Foo ref={ref} />, scratch);
-		expect(ref).to.have.been.calledOnce;
+		expect(ref).not.to.have.been.called;
 
 		ref.resetHistory();
 		render(<span />, scratch);
@@ -127,7 +127,7 @@ describe('refs', () => {
 		inner.resetHistory();
 		update();
 
-		expect(outer, 're-render').to.have.been.calledOnce.and.calledWith(inst);
+		expect(outer, 're-render').not.to.have.been.called;
 		expect(inner, 're-render').not.to.have.been.called;
 
 		inner.resetHistory();
@@ -184,8 +184,8 @@ describe('refs', () => {
 		innermost.resetHistory();
 		render(<Outer ref={outer} />, scratch);
 
-		expect(outer, 'outer update').to.have.been.calledOnce.and.calledWith(outerInst);
-		expect(inner, 'inner update').to.have.been.calledOnce.and.calledWith(innerInst);
+		expect(outer, 'outer update').not.to.have.been.called;
+		expect(inner, 'inner update').not.to.have.been.called;
 		expect(innermost, 'innerMost update').not.to.have.been.called;
 
 		innermost.resetHistory();
@@ -347,5 +347,27 @@ describe('refs', () => {
 
 		render(<input type="text" ref={autoFocus} value="foo" />, scratch);
 		expect(input.value).to.equal('foo');
+	});
+
+	it('should correctly call child refs for un-keyed children on re-render', () => {
+		let el = null;
+		let ref = e => { el = e; };
+
+		class App extends Component {
+			render({ headerVisible }) {
+				return (
+					<div>
+						{headerVisible && <div>foo</div>}
+						<div ref={ref}>bar</div>
+					</div>
+				);
+			}
+		}
+
+		render(<App headerVisible />, scratch);
+		expect(el).to.not.be.equal(null);
+
+		render(<App />, scratch);
+		expect(el).to.not.be.equal(null);
 	});
 });

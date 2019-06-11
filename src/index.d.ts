@@ -1,19 +1,20 @@
 export = preact;
 export as namespace preact;
 
-import "./jsx";
+import { JSXInternal } from "./jsx";
 
 declare namespace preact {
+	export import JSX = JSXInternal;
+
 	//
 	// Preact Virtual DOM
 	// -----------------------------------
 
 	interface VNode<P = {}> {
-		type: ComponentFactory<P> | string | null;
-		props: P & { children: ComponentChildren };
-		text?: string | number | null;
-		key?: Key;
-		ref?: Ref<any>;
+		type: ComponentType<P> | string | null;
+		props: P & { children: ComponentChildren } | string | number | null;
+		key: Key;
+		ref: Ref<any> | null;
 		/**
 		 * The time this `vnode` started rendering. Will only be set when
 		 * the devtools are attached.
@@ -61,24 +62,27 @@ declare namespace preact {
 		P & Attributes & { children?: ComponentChildren; ref?: Ref<RefType> }
 	>;
 
-	type ComponentFactory<P = {}> = ComponentConstructor<P> | FunctionalComponent<P>;
+	type ComponentType<P = {}> = ComponentClass<P> | FunctionComponent<P>;
+	type ComponentFactory<P = {}> = ComponentType<P>;
 
-	interface FunctionalComponent<P = {}> {
+	interface FunctionComponent<P = {}> {
 		(props: RenderableProps<P>, context?: any): VNode<any> | null;
 		displayName?: string;
 		defaultProps?: Partial<P>;
 	}
+	interface FunctionalComponent<P = {}> extends FunctionComponent<P> {}
 
-	interface ComponentConstructor<P = {}, S = {}> {
+	interface ComponentClass<P = {}, S = {}> {
 		new (props: P, context?: any): Component<P, S>;
 		displayName?: string;
 		defaultProps?: Partial<P>;
 		getDerivedStateFromProps?(props: Readonly<P>, state: Readonly<S>): Partial<S>;
 		getDerivedStateFromError?(error: any): Partial<S>;
 	}
+	interface ComponentConstructor<P = {}, S = {}> extends ComponentClass<P, S> {}
 
 	// Type alias for a component instance considered generally, whether stateless or stateful.
-	type AnyComponent<P = {}, S = {}> = FunctionalComponent<P> | Component<P, S>;
+	type AnyComponent<P = {}, S = {}> = FunctionComponent<P> | Component<P, S>;
 
 	interface Component<P = {}, S = {}> {
 		componentWillMount?(): void;
@@ -89,7 +93,7 @@ declare namespace preact {
 		shouldComponentUpdate?(nextProps: Readonly<P>, nextState: Readonly<S>, nextContext: any): boolean;
 		componentWillUpdate?(nextProps: Readonly<P>, nextState: Readonly<S>, nextContext: any): void;
 		getSnapshotBeforeUpdate?(oldProps: Readonly<P>, oldState: Readonly<S>): any;
-		componentDidUpdate?(previousProps: Readonly<P>, previousState: Readonly<S>, previousContext: any): void;
+		componentDidUpdate?(previousProps: Readonly<P>, previousState: Readonly<S>, snapshot: any): void;
 		componentDidCatch?(error: any): void;
 	}
 
@@ -98,7 +102,7 @@ declare namespace preact {
 
 		static displayName?: string;
 		static defaultProps?: any;
-		static contextType?: PreactContext<any>;
+		static contextType?: Context<any>;
 
 		// Static members cannot reference class type parameters. This is not
 		// supported in TypeScript. Reusing the same type arguments from `Component`
@@ -112,7 +116,7 @@ declare namespace preact {
 		state: Readonly<S>;
 		props: RenderableProps<P>;
 		context: any;
-		base?: HTMLElement;
+		base?: Element | Text;
 
 		// From https://github.com/DefinitelyTyped/DefinitelyTyped/blob/e836acc75a78cf0655b5dfdbe81d69fdd4d8a252/types/react/index.d.ts#L402
 		// // We MUST keep setState() as a unified signature because it allows proper checking of the method return type.
@@ -134,23 +138,42 @@ declare namespace preact {
 
 	function createElement(
 		type: string,
-		props: JSX.HTMLAttributes & JSX.SVGAttributes & Record<string, any> | null,
+		props: JSXInternal.HTMLAttributes & JSXInternal.SVGAttributes & Record<string, any> | null,
 		...children: ComponentChildren[]
 	): VNode<any>;
 	function createElement<P>(
-		type: ComponentFactory<P>,
+		type: ComponentType<P>,
 		props: Attributes & P | null,
 		...children: ComponentChildren[]
 	): VNode<any>;
+	namespace createElement {
+		export import JSX = JSXInternal;
+	}
 
-	const h: typeof createElement;
+	function h(
+		type: string,
+		props: JSXInternal.HTMLAttributes & JSXInternal.SVGAttributes & Record<string, any> | null,
+		...children: ComponentChildren[]
+	): VNode<any>;
+	function h<P>(
+		type: ComponentType<P>,
+		props: Attributes & P | null,
+		...children: ComponentChildren[]
+	): VNode<any>;
+	namespace h {
+		export import JSX = JSXInternal;
+	}
 
 	//
 	// Preact render
 	// -----------------------------------
 
-	function render(vnode: ComponentChild, parent: Element | Document | ShadowRoot | DocumentFragment): void
-	function hydrate(vnode: ComponentChild, parent: Element | Document | ShadowRoot | DocumentFragment): void
+	function render(
+		vnode: ComponentChild,
+		parent: Element | Document | ShadowRoot | DocumentFragment,
+		replaceNode?: Element | Text
+	): void;
+	function hydrate(vnode: ComponentChild, parent: Element | Document | ShadowRoot | DocumentFragment): void;
 	function cloneElement(vnode: JSX.Element, props: any, ...children: ComponentChildren[]): JSX.Element;
 
 	//
@@ -158,7 +181,7 @@ declare namespace preact {
 	// -----------------------------------
 
 	// TODO: Revisit what the public type of this is...
-	const Fragment: ComponentConstructor<{}, {}>;
+	const Fragment: ComponentClass<{}, {}>;
 
 	//
 	// Preact options
@@ -168,19 +191,16 @@ declare namespace preact {
 	 * Global options for preact
 	 */
 	interface Options {
-		/** Attach a hook that is invoked whenever a VNode is created */
-		vnode(vnode: VNode): void;
-		/** Attach a hook that is invoked after a tree was mounted or was updated. */
-		commit?(vnode: VNode): void;
-		/** Attach a hook that is invoked immediately before a component is unmounted. */
+		/** Attach a hook that is invoked whenever a VNode is created. */
+		vnode?(vnode: VNode): void;
+		/** Attach a hook that is invoked immediately before a vnode is unmounted. */
 		unmount?(vnode: VNode): void;
-		/** Attach a hook that is invoked before a vnode is diffed */
-		diff?(vnode: VNode): void;
-		/** Attach a hook that is invoked before a vnode has rendered */
-		render?(vnode: VNode): void;
-		/** Attach a hook that is invoked after a vnode has rendered */
+		/** Attach a hook that is invoked after a vnode has rendered. */
 		diffed?(vnode: VNode): void;
 		event?(e: Event): void;
+		requestAnimationFrame?: typeof requestAnimationFrame;
+		debounceRendering?(cb: () => void): void;
+		useDebugValue?(value: string | number): void;
 	}
 
 	const options: Options;
@@ -194,19 +214,22 @@ declare namespace preact {
 	//
 	// Context
 	// -----------------------------------
-	interface PreactConsumer<T> extends FunctionalComponent<{
+	interface Consumer<T> extends FunctionComponent<{
 		children: (value: T) => ComponentChildren
 	}> {}
+	interface PreactConsumer<T> extends Consumer<T> {}
 
-	interface PreactProvider<T> extends FunctionalComponent<{
+	interface Provider<T> extends FunctionComponent<{
 		value: T,
 		children: ComponentChildren
 	}> {}
+	interface PreactProvider<T> extends Provider<T> {}
 
-	interface PreactContext<T> {
-		Consumer: PreactConsumer<T>;
-		Provider: PreactProvider<T>;
+	interface Context<T> {
+		Consumer: Consumer<T>;
+		Provider: Provider<T>;
 	}
+	interface PreactContext<T> extends Context<T> {}
 
-	function createContext<T>(defaultValue: T): PreactContext<T>;
+	function createContext<T>(defaultValue: T): Context<T>;
 }

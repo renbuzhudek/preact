@@ -1,6 +1,6 @@
 import { createElement as h, render, Component, Fragment } from '../../src/index';
 import { setupRerender } from 'preact/test-utils';
-import { setupScratch, teardown, getMixedArray, mixedArrayHTML } from '../_util/helpers';
+import { setupScratch, teardown, getMixedArray, mixedArrayHTML, serializeHtml } from '../_util/helpers';
 
 /** @jsx h */
 
@@ -118,6 +118,19 @@ describe('Components', () => {
 			expect(scratch.innerHTML).to.equal('<div foo="bar"></div>');
 		});
 
+		it('should not crash when setting state with cb in constructor', () => {
+			let spy = sinon.spy();
+			class Foo extends Component {
+				constructor(props) {
+					super(props);
+					this.setState({ preact: 'awesome' }, spy);
+				}
+			}
+
+			expect(() => render(<Foo foo="bar" />, scratch)).not.to.throw();
+			expect(spy).to.not.be.called;
+		});
+
 		it('should initialize props & context but not state in Component constructor', () => {
 			// Not initializing state matches React behavior: https://codesandbox.io/s/rml19v8o2q
 			class Foo extends Component {
@@ -168,6 +181,92 @@ describe('Components', () => {
 			expect(instance.context).to.deep.equal({});
 
 			expect(scratch.innerHTML).to.equal('<div foo="bar">Hello</div>');
+		});
+
+		it('should also update the current dom', () => {
+			let trigger;
+
+			class A extends Component {
+				constructor(props) {
+					super(props);
+					this.state = { show: false };
+					trigger = this.set = this.set.bind(this);
+				}
+
+				set() {
+					this.setState({ show: true });
+				}
+
+				render() {
+					return this.state.show ? <div>A</div> : null;
+				}
+			}
+
+			const B = () => <p>B</p>;
+
+			render(
+				<div>
+					<A />
+					<B />
+				</div>,
+				scratch
+			);
+			expect(scratch.innerHTML).to.equal('<div><p>B</p></div>');
+
+			trigger();
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div><div>A</div><p>B</p></div>');
+		});
+
+		it('should not orphan children', () => {
+			let triggerC, triggerA;
+			const B = () => <p>B</p>;
+
+			// Component with state which swaps its returned element type
+			class C extends Component {
+				constructor(props) {
+					super(props);
+					this.state = { show: false };
+					triggerC = this.set = this.set.bind(this);
+				}
+
+				set() {
+					this.setState({ show: true });
+				}
+
+				render() {
+					return this.state.show ? <div>data</div> : <p>Loading</p>;
+				}
+			}
+
+			const WrapC = () => <C />;
+
+			class A extends Component {
+				constructor(props) {
+					super(props);
+					this.state = { show: false };
+					triggerA = this.set = this.set.bind(this);
+				}
+
+				set() {
+					this.setState({ show: true });
+				}
+
+				render() {
+					return this.state.show ? <B /> : <WrapC />;
+				}
+			}
+
+			render(<A />, scratch);
+			expect(scratch.innerHTML).to.equal('<p>Loading</p>');
+
+			triggerC();
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div>data</div>');
+
+			triggerA();
+			rerender();
+			expect(scratch.innerHTML).to.equal('<p>B</p>');
 		});
 
 		it('should render components that don\'t pass args into the Component constructor (unistore pattern)', () => {
@@ -379,7 +478,7 @@ describe('Components', () => {
 		expect(scratch.innerHTML).to.equal('<span>span in a component</span>');
 	});
 
-	// Test for Issue developit/preact#176
+	// Test for Issue preactjs/preact#176
 	it('should remove children when root changes to text node', () => {
 		let comp;
 
@@ -408,7 +507,79 @@ describe('Components', () => {
 		expect(scratch.innerHTML, 'switching to textnode 2').to.equal('asdf');
 	});
 
-	// Test for Issue developit/preact#254
+	// Test for Issue preactjs/preact#1616
+	it('should maintain order when setting state (that inserts dom-elements)', () => {
+		let add, addTwice, reset;
+		const Entry = props => (
+			<div>{props.children}</div>
+		);
+
+		class App extends Component {
+			constructor(props) {
+				super(props);
+
+				this.state = { values: ['abc'] };
+
+				add = this.add = this.add.bind(this);
+				addTwice = this.addTwice = this.addTwice.bind(this);
+				reset = this.reset = this.reset.bind(this);
+			}
+
+			add() {
+				this.setState({ values: [...this.state.values, 'def'] });
+			}
+
+			addTwice() {
+				this.setState({ values: [...this.state.values, 'def', 'ghi'] });
+			}
+
+			reset() {
+				this.setState({ values: ['abc'] });
+			}
+
+			render() {
+				return (
+					<div>
+						{this.state.values.map(v => (
+							<Entry>
+								{v}
+							</Entry>
+						))}
+						<button>First Button</button>
+						<button>Second Button</button>
+						<button>Third Button</button>
+					</div>
+				);
+			}
+		}
+
+		render(<App />, scratch);
+		expect(scratch.firstChild.innerHTML).to.equal('<div>abc</div>' +
+			'<button>First Button</button><button>Second Button</button><button>Third Button</button>');
+
+		add();
+		rerender();
+		expect(scratch.firstChild.innerHTML).to.equal('<div>abc</div><div>def' +
+			'</div><button>First Button</button><button>Second Button</button><button>Third Button</button>');
+
+		add();
+		rerender();
+		expect(scratch.firstChild.innerHTML).to.equal('<div>abc</div><div>def</div><div>def' +
+			'</div><button>First Button</button><button>Second Button</button><button>Third Button</button>');
+
+		reset();
+		rerender();
+		expect(scratch.firstChild.innerHTML).to.equal('<div>abc</div>' +
+			'<button>First Button</button><button>Second Button</button><button>Third Button</button>');
+
+		addTwice();
+		rerender();
+		expect(scratch.firstChild.innerHTML).to.equal('<div>abc</div><div>def</div><div>ghi' +
+			'</div><button>First Button</button><button>Second Button</button><button>Third Button</button>');
+	});
+
+
+	// Test for Issue preactjs/preact#254
 	it('should not recycle common class children with different keys', () => {
 		let idx = 0;
 		let msgs = ['A','B','C','D','E','F','G','H'];
@@ -487,9 +658,10 @@ describe('Components', () => {
 		Comp.prototype.componentWillMount.resetHistory();
 		bad.setState({ alt: true });
 		rerender();
-		expect(scratch.textContent, 'new component without key re-rendered').to.equal('D');
-		expect(Comp.prototype.componentWillMount).to.not.have.been.called;
-		expect(sideEffect).to.not.have.been.called;
+
+		expect(scratch.textContent, 'use null placeholders to detect new component is appended').to.equal('F');
+		expect(Comp.prototype.componentWillMount).to.be.calledOnce;
+		expect(sideEffect).to.be.calledOnce;
 	});
 
 	describe('array children', () => {
@@ -875,9 +1047,7 @@ describe('Components', () => {
 			class Inner extends Component {
 				constructor(...args) {
 					super();
-					this._constructor(...args);
 				}
-				_constructor() {}
 				componentWillMount() {}
 				componentDidMount() {}
 				componentWillUnmount() {}
@@ -885,7 +1055,6 @@ describe('Components', () => {
 					return <div j={++j} {...props}>inner</div>;
 				}
 			}
-			sinon.spy(Inner.prototype, '_constructor');
 			sinon.spy(Inner.prototype, 'render');
 			sinon.spy(Inner.prototype, 'componentWillMount');
 			sinon.spy(Inner.prototype, 'componentDidMount');
@@ -901,7 +1070,6 @@ describe('Components', () => {
 
 			expect(Outer.prototype.componentWillUnmount).not.to.have.been.called;
 
-			expect(Inner.prototype._constructor).to.have.been.calledOnce;
 			expect(Inner.prototype.componentWillUnmount).not.to.have.been.called;
 			expect(Inner.prototype.componentWillMount).to.have.been.calledOnce;
 			expect(Inner.prototype.componentDidMount).to.have.been.calledOnce;
@@ -923,7 +1091,7 @@ describe('Components', () => {
 				foo: 'bar'
 			});
 
-			expect(sortAttributes(scratch.innerHTML)).to.equal(sortAttributes('<div foo="bar" j="2" i="2">inner</div>'));
+			expect(serializeHtml(scratch)).to.equal(sortAttributes('<div foo="bar" j="2" i="2">inner</div>'));
 
 			// update & flush
 			doRender();
@@ -965,7 +1133,7 @@ describe('Components', () => {
 			doRender();
 			rerender();
 
-			expect(sortAttributes(scratch.innerHTML)).to.equal(sortAttributes('<div foo="bar" j="4" i="5">inner</div>'));
+			expect(serializeHtml(scratch)).to.equal(sortAttributes('<div foo="bar" j="4" i="5">inner</div>'));
 		});
 
 		it('should resolve intermediary functional component', () => {
@@ -1211,6 +1379,40 @@ describe('Components', () => {
 			expect(C3.prototype.componentWillMount, 'inject between, C3 w/ intermediary fn').to.have.been.calledOnce;
 		});
 
+		it('should render components by depth', () => {
+			let spy = sinon.spy();
+			let update;
+			class Child extends Component {
+				constructor(props) {
+					super(props);
+					update = () => {
+						this.props.update();
+						this.setState({});
+					};
+				}
+
+				render() {
+					spy();
+					let items = [];
+					for (let i = 0; i < this.props.items; i++) items.push(i);
+					return <div>{items.join(',')}</div>;
+				}
+			}
+
+			let i = 0;
+			class Parent extends Component {
+				render() {
+					return <Child items={++i} update={() => this.setState({})} />;
+				}
+			}
+
+			render(<Parent />, scratch);
+			expect(spy).to.be.calledOnce;
+
+			update();
+			rerender();
+			expect(spy).to.be.calledTwice;
+		});
 
 		it('should handle lifecycle for nested intermediary elements', () => {
 			useIntermediary = 'div';
@@ -1242,5 +1444,133 @@ describe('Components', () => {
 			expect(C2.prototype.componentWillMount, 'inject between, C2 w/ intermediary div').to.have.been.calledOnce;
 			expect(C3.prototype.componentWillMount, 'inject between, C3 w/ intermediary div').to.have.been.calledOnce;
 		});
+	});
+
+	it('should set component._vnode._dom when sCU returns false', () => {
+		let parent;
+		 class Parent extends Component {
+			 render() {
+				parent = this;
+				return <Child />;
+			}
+		}
+
+		let condition = false;
+
+		let child;
+		class Child extends Component {
+			shouldComponentUpdate() {
+				return false;
+			}
+			render() {
+				child = this;
+				if (!condition) return null;
+				return <div class="child" />;
+			}
+		}
+
+		let app;
+		class App extends Component {
+			render() {
+				app = this;
+				return <Parent />;
+			}
+		}
+
+		render(<App />, scratch);
+		expect(child._vnode._dom).to.equalNode(child.base);
+
+		app.forceUpdate();
+		expect(child._vnode._dom).to.equalNode(child.base);
+
+		parent.setState({});
+		condition = true;
+		child.forceUpdate();
+		expect(child._vnode._dom).to.equalNode(child.base);
+		rerender();
+
+		expect(child._vnode._dom).to.equalNode(child.base);
+
+		condition = false;
+		app.setState({});
+		child.forceUpdate();
+		rerender();
+		expect(child._vnode._dom).to.equalNode(child.base);
+	});
+
+	it('should update old dom on forceUpdate in a lifecycle', () => {
+		let i = 0;
+		class App extends Component {
+			componentWillReceiveProps() {
+				this.forceUpdate();
+			}
+			render() {
+				if (i++==0) return <div>foo</div>;
+				return <div>bar</div>;
+			}
+		}
+
+		render(<App />, scratch);
+		render(<App />, scratch);
+
+		expect(scratch.innerHTML).to.equal('<div>bar</div>');
+	});
+
+	// preact/#1323
+	it('should handle hoisted component vnodes without DOM', () => {
+		let x = 0;
+		let mounted = '';
+		let unmounted = '';
+
+		class X extends Component {
+			constructor(props) {
+				super(props);
+				this.name = `${x++}`;
+			}
+
+			componentDidMount() {
+				mounted += `,${this.name}`;
+			}
+
+			componentWillUnmount() {
+				unmounted += `,${this.name}`;
+			}
+
+			render() {
+				return null;
+			}
+		}
+
+		const A = <X />;
+
+		class App extends Component {
+			constructor(props) {
+				super(props);
+				this.state = { i: 0 };
+			}
+
+			componentDidMount() {
+				// eslint-disable-next-line react/no-did-mount-set-state
+				this.setState({ i: this.state.i + 1 });
+				rerender();
+				// eslint-disable-next-line react/no-did-mount-set-state
+				this.setState({ i: this.state.i + 1 });
+				rerender();
+			}
+
+			render() {
+				return (
+					<div key={this.state.i}>
+						{A}
+						{A}
+					</div>
+				);
+			}
+		}
+
+		render(<App />, scratch);
+
+		expect(mounted).to.equal(',1,0,3,2,5,4');
+		expect(unmounted).to.equal(',0,1,2,3');
 	});
 });

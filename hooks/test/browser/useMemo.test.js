@@ -1,6 +1,4 @@
-import { setupRerender } from 'preact/test-utils';
 import { createElement as h, render } from 'preact';
-import { spy } from 'sinon';
 import { setupScratch, teardown } from '../../../test/_util/helpers';
 import { useMemo } from '../../src';
 
@@ -12,12 +10,8 @@ describe('useMemo', () => {
 	/** @type {HTMLDivElement} */
 	let scratch;
 
-	/** @type {() => void} */
-	let rerender;
-
 	beforeEach(() => {
 		scratch = setupScratch();
-		rerender = setupRerender();
 	});
 
 	afterEach(() => {
@@ -25,7 +19,7 @@ describe('useMemo', () => {
 	});
 
 	it('only recomputes the result when inputs change', () => {
-		let memoFunction = spy((a, b) => a + b);
+		let memoFunction = sinon.spy((a, b) => a + b);
 		const results = [];
 
 		function Comp({ a, b }) {

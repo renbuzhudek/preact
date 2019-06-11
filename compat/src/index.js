@@ -1,6 +1,8 @@
-import { render as preactRender, cloneElement as preactCloneElement, createRef, h, Component, options, toChildArray, createContext, Fragment } from 'preact';
+import { hydrate, render as preactRender, cloneElement as preactCloneElement, createRef, h, Component, options, toChildArray, createContext, Fragment } from 'preact';
 import * as hooks from 'preact/hooks';
 export * from 'preact/hooks';
+import { Suspense as _Suspense, lazy as _lazy, catchRender } from './suspense';
+import { assign } from '../../src/util';
 
 const version = '16.8.0'; // trick libraries to think we are react
 
@@ -13,10 +15,14 @@ let oldEventHook = options.event;
 options.event = e => {
 	/* istanbul ignore next */
 	if (oldEventHook) e = oldEventHook(e);
-	e.persist = Object;
-	e.nativeEvent = e;
-	return e;
+	e.persist = () => {};
+	return e.nativeEvent = e;
 };
+
+let oldCatchRender = options._catchRender;
+options._catchRender = (error, component) => (
+	oldCatchRender && oldCatchRender(error, component) || catchRender(error, component)
+);
 
 /**
  * Legacy version of createElement.
@@ -53,7 +59,7 @@ function render(vnode, parent, callback) {
 	preactRender(vnode, parent);
 	if (typeof callback==='function') callback();
 
-	return vnode!=null ? vnode._component : null;
+	return vnode ? vnode._component : null;
 }
 
 class ContextProvider {
@@ -71,7 +77,17 @@ class ContextProvider {
  */
 function Portal(props) {
 	let wrap = h(ContextProvider, { context: this.context }, props.vnode);
-	render(wrap, props.container);
+	let container = props.container;
+
+	if (props.container !== this.container) {
+		hydrate('', container);
+		this.container = container;
+	}
+
+	render(wrap, container);
+	this.componentWillUnmount = () => {
+		render(null, container);
+	};
 	return null;
 }
 
@@ -85,9 +101,8 @@ function createPortal(vnode, container) {
 }
 
 const mapFn = (children, fn) => {
-	if (children == null) return null;
-	children = toChildArray(children);
-	return children.map(fn);
+	if (!children) return null;
+	return toChildArray(children).map(fn);
 };
 
 // This API is completely unnecessary for Preact, so it's basically passthrough.
@@ -126,7 +141,7 @@ function createElement(...args) {
 
 		if (Array.isArray(props.value) && props.multiple && type==='select') {
 			toChildArray(props.children).forEach((child) => {
-				if (props.value.indexOf(child.props.value)!==-1) {
+				if (props.value.indexOf(child.props.value)!=-1) {
 					child.props.selected = true;
 				}
 			});
@@ -146,7 +161,6 @@ function createElement(...args) {
 function normalizeVNode(vnode) {
 	vnode.preactCompatNormalized = true;
 	applyClassName(vnode);
-	applyEventNormalization(vnode);
 	return vnode;
 }
 
@@ -170,7 +184,7 @@ function cloneElement(element) {
  * @returns {boolean}
  */
 function isValidElement(element) {
-	return element!=null && element.$$typeof===REACT_ELEMENT_TYPE;
+	return !!element && element.$$typeof===REACT_ELEMENT_TYPE;
 }
 
 /**
@@ -178,7 +192,7 @@ function isValidElement(element) {
  * @param {import('./internal').VNode} vnode The vnode to normalize events on
  */
 function applyEventNormalization({ type, props }) {
-	if (!props || typeof type!=='string') return;
+	if (!props || typeof type!='string') return;
 	let newProps = {};
 	for (let i in props) {
 		newProps[i.toLowerCase()] = i;
@@ -207,7 +221,7 @@ function applyEventNormalization({ type, props }) {
  * @returns {boolean}
  */
 function unmountComponentAtNode(container) {
-	if (container._prevVNode!=null) {
+	if (container._children) {
 		preactRender(null, container);
 		return true;
 	}
@@ -274,9 +288,9 @@ Component.prototype.isReactComponent = {};
 /**
  * Memoize a component, so that it only updates when the props actually have
  * changed. This was previously known as `React.pure`.
- * @param {import('./internal').ComponentFactory<any>} c The component constructor
+ * @param {import('./internal').FunctionalComponent} c functional component
  * @param {(prev: object, next: object) => boolean} [comparer] Custom equality function
- * @returns {import('./internal').ComponentFactory<any>}
+ * @returns {import('./internal').FunctionalComponent}
  */
 function memo(c, comparer) {
 	function shouldUpdate(nextProps) {
@@ -285,14 +299,14 @@ function memo(c, comparer) {
 		if (!updateRef) {
 			ref.call ? ref(null) : (ref.current = null);
 		}
-		return (comparer==null
+		return (!comparer
 			? shallowDiffers(this.props, nextProps)
 			: !comparer(this.props, nextProps)) || !updateRef;
 	}
 
 	function Memoed(props) {
 		this.shouldComponentUpdate = shouldUpdate;
-		return h(c, { ...props });
+		return h(c, assign({}, props));
 	}
 	Memoed.displayName = 'Memo(' + (c.displayName || c.name) + ')';
 	Memoed._forwarded = true;
@@ -334,14 +348,26 @@ let oldVNodeHook = options.vnode;
 options.vnode = vnode => {
 	vnode.$$typeof = REACT_ELEMENT_TYPE;
 
+	applyEventNormalization(vnode);
 	let type = vnode.type;
-	if (type!=null && type._forwarded && vnode.ref!=null) {
+	if (type && type._forwarded && vnode.ref) {
 		vnode.props.ref = vnode.ref;
 		vnode.ref = null;
 	}
 	/* istanbul ignore next */
 	if (oldVNodeHook) oldVNodeHook(vnode);
 };
+
+/**
+ * Deprecated way to control batched rendering inside the reconciler, but we
+ * already schedule in batches inside our rendering code
+ * @param {(a) => void} callback function that triggers the updatd
+ * @param {*} [arg] Optional argument that can be passed to the callback
+ */
+// eslint-disable-next-line camelcase
+function unstable_batchedUpdates(callback, arg) {
+	callback(arg);
+}
 
 export {
 	version,
@@ -361,12 +387,16 @@ export {
 	Component,
 	PureComponent,
 	memo,
-	forwardRef
+	forwardRef,
+	// eslint-disable-next-line camelcase
+	unstable_batchedUpdates
 };
 
+export const Suspense = _Suspense;
+export const lazy = _lazy;
+
 // React copies the named exports to the default one.
-export default {
-	...hooks,
+export default assign({
 	version,
 	Children,
 	render,
@@ -384,5 +414,6 @@ export default {
 	Component,
 	PureComponent,
 	memo,
-	forwardRef
-};
+	forwardRef,
+	unstable_batchedUpdates
+}, hooks);

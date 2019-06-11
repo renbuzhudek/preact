@@ -1,4 +1,4 @@
-import { getData, getChildren, getInstance, hasProfileDataChanged, hasDataChanged, isRoot } from './custom';
+import { getData, getChildren, getInstance, hasDataChanged, isRoot } from './custom';
 
 /**
  * Custom renderer tailored for Preact. It converts updated vnode trees
@@ -129,7 +129,9 @@ export class Renderer {
 
 		// The `updateProfileTimes` event is a faster version of `updated` and
 		// is processed much quicker inside the devtools extension.
-		if (!hasDataChanged(prev, vnode) && hasProfileDataChanged(prev, vnode)) {
+		if (!hasDataChanged(prev, vnode)) {
+			// Always assume profiling data has changed. When we skip an event here
+			// the devtools element picker will somehow break.
 			this.pending.push({
 				// This property is only used as an id inside the devtools. The
 				// relevant data will be read from `.data` instead which is a
@@ -182,11 +184,11 @@ export class Renderer {
 		}
 		else {
 			// "rootCommitted" always needs the actual root node for the profiler
-			// to be able to collect timings. The `_ancestorComponent` property will
+			// to be able to collect timings. The `_parent` property will
 			// point to a vnode for a root node.
-			root = vnode._component;
-			while (root._ancestorComponent!=null) {
-				root = root._ancestorComponent;
+			root = vnode;
+			while (root._parent!=null) {
+				root = root._parent;
 			}
 		}
 

@@ -2,7 +2,9 @@
 
 import { setupRerender } from 'preact/test-utils';
 import { createElement as h, render, Component } from '../../src/index';
-import { setupScratch, teardown, getMixedArray, mixedArrayHTML } from '../_util/helpers';
+import { setupScratch, teardown, getMixedArray, mixedArrayHTML, sortCss, serializeHtml, supportsPassiveEvents, supportsDataList } from '../_util/helpers';
+import { clearLog, getLog, logCall } from '../_util/logCall';
+import options from '../../src/options';
 
 /** @jsx h */
 
@@ -35,6 +37,13 @@ describe('render()', () => {
 		teardown(scratch);
 	});
 
+	before(() => {
+		logCall(Element.prototype, 'appendChild');
+		logCall(Element.prototype, 'insertBefore');
+		logCall(Element.prototype, 'removeChild');
+		logCall(Element.prototype, 'remove');
+	});
+
 	it('should render nothing node given null', () => {
 		render(null, scratch);
 		let c = scratch.childNodes;
@@ -55,6 +64,12 @@ describe('render()', () => {
 		expect(scratch.innerHTML).to.eql(
 			`<div>Good</div>`
 		);
+	});
+
+	it('should not render when detecting JSON-injection', () => {
+		const vnode = JSON.parse('{"type":"span","children":"Malicious"}');
+		render(vnode, scratch);
+		expect(scratch.firstChild).to.be.null;
 	});
 
 	it('should create empty nodes (<* />)', () => {
@@ -165,10 +180,9 @@ describe('render()', () => {
 		expect(scratch.innerHTML).to.equal('');
 	});
 
-	it('should throw an error on function children', () => {
-		expect(
-			() => render(<div>{() => {}}</div>, scratch)
-		).to.throw();
+	it('should not render children when using function children', () => {
+		render(<div>{() => {}}</div>, scratch);
+		expect(scratch.innerHTML).to.equal('<div></div>');
 	});
 
 	it('should render NaN as text content', () => {
@@ -241,46 +255,54 @@ describe('render()', () => {
 		expect(root.children[3]).to.have.property('value', '');
 	});
 
-	it('should not clear falsy DOM properties', () => {
-		function test(val) {
-			render((
-				<div>
-					<input value={val} />
-					<table border={val} />
-				</div>
-			), scratch);
-		}
-
-		test('2');
-		test(false);
-		expect(scratch).to.have.property('innerHTML', '<div><input><table border="false"></table></div>', 'for false');
-
-		test('3');
-		test(null);
-		expect(scratch).to.have.property('innerHTML', '<div><input><table border=""></table></div>', 'for null');
-
-		test('4');
-		test(undefined);
-		expect(scratch).to.have.property('innerHTML', '<div><input><table border=""></table></div>', 'for undefined');
+	it('should set value inside the specified range', () => {
+		render(
+			<input type="range" value={0.5} min="0" max="1" step="0.05" />,
+			scratch
+		);
+		expect(scratch.firstChild.value).to.equal('0.5');
 	});
 
-	// Test for developit/preact#651
+	// IE or IE Edge will throw when attribute values don't conform to the
+	// spec. That's the correct behaviour, but bad for this test...
+	if (!/(Edge|MSIE|Trident)/.test(navigator.userAgent)) {
+		it('should not clear falsy DOM properties', () => {
+			function test(val) {
+				render((
+					<div>
+						<input value={val} />
+						<table border={val} />
+					</div>
+				), scratch);
+			}
+
+			test('2');
+			test(false);
+			expect(scratch.innerHTML).to.equal('<div><input><table border="false"></table></div>', 'for false');
+
+			test('3');
+			test(null);
+			expect(scratch.innerHTML).to.equal('<div><input><table border=""></table></div>', 'for null');
+
+			test('4');
+			test(undefined);
+			expect(scratch.innerHTML).to.equal('<div><input><table border=""></table></div>', 'for undefined');
+		});
+	}
+
+	// Test for preactjs/preact#651
 	it('should set enumerable boolean attribute', () => {
 		render(<input spellcheck={false} />, scratch);
 		expect(scratch.firstChild.spellcheck).to.equal(false);
 	});
 
+	it('should not set tagName', () => {
+		expect(() => render(<input tagName="div" />, scratch)).not.to.throw();
+	});
+
 	it('should apply string attributes', () => {
 		render(<div foo="bar" data-foo="databar" />, scratch);
-
-		let div = scratch.childNodes[0];
-		expect(div.attributes.length).to.equal(2);
-
-		expect(div.attributes[0].name).to.equal('foo');
-		expect(div.attributes[0].value).to.equal('bar');
-
-		expect(div.attributes[1].name).to.equal('data-foo');
-		expect(div.attributes[1].value).to.equal('databar');
+		expect(serializeHtml(scratch)).to.equal('<div data-foo="databar" foo="bar"></div>');
 	});
 
 	it('should not serialize function props as attributes', () => {
@@ -296,11 +318,11 @@ describe('render()', () => {
 		let div = scratch.childNodes[0];
 		expect(div.attributes.length).to.equal(2);
 
-		expect(div.attributes[0].name).equal('foo');
-		expect(div.attributes[0].value).equal('[object Object]');
+		expect(div.attributes[0].name).equal('bar');
+		expect(div.attributes[0].value).equal('abc');
 
-		expect(div.attributes[1].name).equal('bar');
-		expect(div.attributes[1].value).equal('abc');
+		expect(div.attributes[1].name).equal('foo');
+		expect(div.attributes[1].value).equal('[object Object]');
 	});
 
 	it('should apply class as String', () => {
@@ -314,58 +336,13 @@ describe('render()', () => {
 	});
 
 	describe('style attribute', () => {
-		it('should apply style as String', () => {
-			render(<div style="top: 5px; position: relative;" />, scratch);
-			expect(scratch.childNodes[0].style.cssText)
-				.to.equal('top: 5px; position: relative;');
-		});
-
-		it('should not call CSSStyleDeclaration.setProperty for style strings', () => {
-			render(<div style="top: 5px; position: relative;" />, scratch);
-			sinon.stub(scratch.firstChild.style, 'setProperty');
-			render(<div style="top: 10px; position: absolute;" />, scratch);
-			expect(scratch.firstChild.style.setProperty).to.not.be.called;
-		});
-
-		it('should properly switch from string styles to object styles and back', () => {
-			render((
-				<div style="display: inline;">test</div>
-			), scratch);
-
-			let root = scratch.firstChild;
-			expect(root.style.cssText).to.equal('display: inline;');
-
-			render((
-				<div style={{ color: 'red' }} />
-			), scratch);
-
-			expect(root.style.cssText).to.equal('color: red;');
-
-			render((
-				<div style="color: blue" />
-			), scratch);
-
-			expect(root.style.cssText).to.equal('color: blue;');
-
-			render((
-				<div style={{ color: 'yellow' }} />
-			), scratch);
-
-			expect(root.style.cssText).to.equal('color: yellow;');
-
-			render((
-				<div style="display: block" />
-			), scratch);
-
-			expect(root.style.cssText).to.equal('display: block;');
-		});
-
 		it('should serialize style objects', () => {
 			const styleObj = {
 				color: 'rgb(255, 255, 255)',
 				background: 'rgb(255, 100, 0)',
 				backgroundPosition: '10px 10px',
 				'background-size': 'cover',
+				gridRowStart: 1,
 				padding: 5,
 				top: 100,
 				left: '100%'
@@ -375,13 +352,18 @@ describe('render()', () => {
 
 			let root = scratch.firstChild;
 			let { style } = root;
-			expect(style).to.have.property('color').that.equals('rgb(255, 255, 255)');
-			expect(style).to.have.property('background').that.contains('rgb(255, 100, 0)');
-			expect(style).to.have.property('backgroundPosition').that.equals('10px 10px');
-			expect(style).to.have.property('backgroundSize', 'cover');
-			expect(style).to.have.property('padding', '5px');
-			expect(style).to.have.property('top', '100px');
-			expect(style).to.have.property('left', '100%');
+			expect(style.color).to.equal('rgb(255, 255, 255)');
+			expect(style.background).to.contain('rgb(255, 100, 0)');
+			expect(style.backgroundPosition).to.equal('10px 10px');
+			expect(style.backgroundSize).to.equal('cover');
+			expect(style.padding).to.equal('5px');
+			expect(style.top).to.equal('100px');
+			expect(style.left).to.equal('100%');
+
+			// Only check for this in browsers that support css grids
+			if (typeof scratch.style.grid=='string') {
+				expect(style.gridRowStart).to.equal('1');
+			}
 		});
 
 		it('should replace previous style objects', () => {
@@ -391,7 +373,7 @@ describe('render()', () => {
 			expect(style.cssText).to.equal('display: inline;');
 			expect(style).to.have.property('display').that.equals('inline');
 			expect(style).to.have.property('color').that.equals('');
-			expect(style).to.have.property('zIndex').that.equals('');
+			expect(style.zIndex.toString()).to.equal('');
 
 			render(<div style={{ color: 'rgb(0, 255, 255)', zIndex: '3' }}>test</div>, scratch);
 
@@ -399,7 +381,9 @@ describe('render()', () => {
 			expect(style.cssText).to.equal('color: rgb(0, 255, 255); z-index: 3;');
 			expect(style).to.have.property('display').that.equals('');
 			expect(style).to.have.property('color').that.equals('rgb(0, 255, 255)');
-			expect(style).to.have.property('zIndex').that.equals('3');
+
+			// IE stores numeric z-index values as a number
+			expect(style.zIndex.toString()).to.equal('3');
 
 			render(<div style={{ color: 'rgb(0, 255, 255)', display: 'inline' }}>test</div>, scratch);
 
@@ -407,14 +391,41 @@ describe('render()', () => {
 			expect(style.cssText).to.equal('color: rgb(0, 255, 255); display: inline;');
 			expect(style).to.have.property('display').that.equals('inline');
 			expect(style).to.have.property('color').that.equals('rgb(0, 255, 255)');
-			expect(style).to.have.property('zIndex').that.equals('');
+			expect(style.zIndex.toString()).to.equal('');
 		});
 
-		it('should support css custom properties', () => {
-			render(<div style={{ '--foo': 'red', color: 'var(--foo)' }}>test</div>, scratch);
-			expect(scratch.firstChild.style.cssText).to.equal('--foo:red; color: var(--foo);');
-			expect(window.getComputedStyle(scratch.firstChild).color).to.equal('rgb(255, 0, 0)');
+		it('should remove old styles', () => {
+			render(<div style={{ color: 'red' }} />, scratch);
+			render(<div style={{ background: 'blue' }} />, scratch);
+			expect(scratch.firstChild.style).to.have.property('color').that.equals('');
+			expect(scratch.firstChild.style).to.have.property('background').that.equals('blue');
 		});
+
+		// Skip test if the currently running browser doesn't support CSS Custom Properties
+		if (window.CSS && CSS.supports('color', 'var(--fake-var)')) {
+			it('should support css custom properties', () => {
+				render(<div style={{ '--foo': 'red', color: 'var(--foo)' }}>test</div>, scratch);
+				expect(sortCss(scratch.firstChild.style.cssText)).to.equal('--foo: red; color: var(--foo);');
+				expect(window.getComputedStyle(scratch.firstChild).color).to.equal('rgb(255, 0, 0)');
+			});
+
+			it('should not add "px" suffix for custom properties', () => {
+				render(<div style={{ '--foo': '100px', width: 'var(--foo)' }}>test</div>, scratch);
+				expect(sortCss(scratch.firstChild.style.cssText)).to.equal('--foo: 100px; width: var(--foo);');
+			});
+
+			it('css vars should not be transformed into dash-separated', () => {
+				render(<div style={{ '--fooBar': 1, '--foo-baz': 2, opacity: 'var(--fooBar)', zIndex: 'var(--foo-baz)' }}>test</div>, scratch);
+				expect(sortCss(scratch.firstChild.style.cssText)).to.equal('--foo-baz: 2; --fooBar: 1; opacity: var(--fooBar); z-index: var(--foo-baz);');
+			});
+
+			it('should call CSSStyleDeclaration.setProperty for css vars', () => {
+				render(<div style={{ padding: '10px' }} />, scratch);
+				sinon.stub(scratch.firstChild.style, 'setProperty');
+				render(<div style={{ '--foo': '10px', padding: 'var(--foo)' }} />, scratch);
+				expect(scratch.firstChild.style.setProperty).to.be.calledWith('--foo', '10px');
+			});
+		}
 	});
 
 	describe('event handling', () => {
@@ -526,31 +537,43 @@ describe('render()', () => {
 			expect(click).not.to.have.been.called;
 		});
 
-		it('should use capturing for event props ending with *Capture', () => {
-			let click = sinon.spy(),
-				focus = sinon.spy();
+		it('should register events not appearing on dom nodes', () => {
+			let onAnimationEnd = () => {};
 
-			render((
-				<div onClickCapture={click} onFocusCapture={focus}>
-					<button />
-				</div>
-			), scratch);
-
-			let root = scratch.firstChild;
-			root.firstElementChild.click();
-			root.firstElementChild.focus();
-
-			expect(click, 'click').to.have.been.calledOnce;
-
-			if (DISABLE_FLAKEY!==true) {
-				// Focus delegation requires a 50b hack I'm not sure we want to incur
-				expect(focus, 'focus').to.have.been.calledOnce;
-
-				// IE doesn't set it
-				expect(click).to.have.been.calledWithMatch({ eventPhase: 0 });		// capturing
-				expect(focus).to.have.been.calledWithMatch({ eventPhase: 0 });		// capturing
-			}
+			render(<div onanimationend={onAnimationEnd} />, scratch);
+			expect(proto.addEventListener).to.have.been.calledOnce.and.to.have.been.calledWithExactly('animationend', sinon.match.func, false);
 		});
+
+		// Skip test if browser doesn't support passive events
+		if (supportsPassiveEvents()) {
+			it('should use capturing for event props ending with *Capture', () => {
+				let click = sinon.spy(),
+					focus = sinon.spy();
+
+				render((
+					<div onClickCapture={click} onFocusCapture={focus}>
+						<button />
+					</div>
+				), scratch);
+
+				let root = scratch.firstChild;
+				root.firstElementChild.click();
+				root.firstElementChild.focus();
+
+				expect(click, 'click').to.have.been.calledOnce;
+
+				if (DISABLE_FLAKEY!==true) {
+					// Focus delegation requires a 50b hack I'm not sure we want to incur
+					expect(focus, 'focus').to.have.been.calledOnce;
+
+					// IE doesn't set it
+					if (!/Edge/.test(navigator.userAgent)) {
+						expect(click).to.have.been.calledWithMatch({ eventPhase: 0 });		// capturing
+						expect(focus).to.have.been.calledWithMatch({ eventPhase: 0 });		// capturing
+					}
+				}
+			});
+		}
 	});
 
 	describe('dangerouslySetInnerHTML', () => {
@@ -597,14 +620,14 @@ describe('render()', () => {
 			expect(scratch.innerHTML).to.equal('<div><foo><bar>test</bar></foo></div>');
 		});
 
-		it('should hydrate with dangerouslySetInnerHTML', () => {
+		it('should not hydrate with dangerouslySetInnerHTML', () => {
 			let html = '<b>foo &amp; bar</b>';
 			scratch.innerHTML = `<div>${html}</div>`;
 			// eslint-disable-next-line react/no-danger
 			render(<div dangerouslySetInnerHTML={{ __html: html }} />, scratch);
 
-			expect(scratch.firstChild).to.have.property('innerHTML', html);
-			expect(scratch.innerHTML).to.equal(`<div>${html}</div>`);
+			expect(scratch.firstChild).to.have.property('innerHTML', '');
+			expect(scratch.innerHTML).to.equal(`<div></div>`);
 		});
 
 		it('should avoid reapplying innerHTML when __html property of dangerouslySetInnerHTML attr remains unchanged', () => {
@@ -623,7 +646,7 @@ describe('render()', () => {
 			// Re-render
 			thing.forceUpdate();
 
-			expect(firstInnerHTMLChild).to.equal(scratch.firstChild.firstChild);
+			expect(firstInnerHTMLChild).to.equalNode(scratch.firstChild.firstChild);
 		});
 	});
 
@@ -666,10 +689,8 @@ describe('render()', () => {
 			</div>
 		), scratch);
 
-		expect(scratch.firstChild.firstChild).to.have.property('nodeName', 'B');
-		expect(scratch.firstChild.lastChild).to.have.property('nodeName', 'A');
-		expect(scratch.firstChild.firstChild).to.equal(b);
-		expect(scratch.firstChild.lastChild).to.equal(a);
+		expect(scratch.firstChild.firstChild).to.equalNode(b);
+		expect(scratch.firstChild.lastChild).to.equalNode(a);
 	});
 
 	it('should not merge attributes with node created by the DOM', () => {
@@ -685,28 +706,32 @@ describe('render()', () => {
 		const preactElement = <div><a /></div>;
 
 		render(preactElement, scratch);
-		expect(scratch).to.have.property('innerHTML', '<div><a></a></div>');
+		expect(scratch).to.have.property('innerHTML', '<div><a foo="bar"></a></div>');
 	});
 
-	// Discussion: https://github.com/developit/preact/issues/287
-	('HTMLDataListElement' in window ? it : xit)('should allow <input list /> to pass through as an attribute', () => {
-		render((
-			<div>
-				<input type="range" min="0" max="100" list="steplist" />
-				<datalist id="steplist">
-					<option>0</option>
-					<option>50</option>
-					<option>100</option>
-				</datalist>
-			</div>
-		), scratch);
+	// Discussion: https://github.com/preactjs/preact/issues/287
+	// <datalist> is not supported in Safari, even though the element
+	// constructor is present
+	if (supportsDataList()) {
+		it('should allow <input list /> to pass through as an attribute', () => {
+			render((
+				<div>
+					<input type="range" min="0" max="100" list="steplist" />
+					<datalist id="steplist">
+						<option>0</option>
+						<option>50</option>
+						<option>100</option>
+					</datalist>
+				</div>
+			), scratch);
 
-		let html = scratch.firstElementChild.firstElementChild.outerHTML;
-		expect(sortAttributes(html)).to.equal(sortAttributes('<input type="range" min="0" max="100" list="steplist">'));
-	});
+			let html = scratch.firstElementChild.firstElementChild.outerHTML;
+			expect(sortAttributes(html)).to.equal(sortAttributes('<input type="range" min="0" max="100" list="steplist">'));
+		});
+	}
 
 	it('should not execute append operation when child is at last', () => {
-		// See developit/preact#717 for discussion about the issue this addresses
+		// See preactjs/preact#717 for discussion about the issue this addresses
 
 		let todoText = 'new todo that I should complete';
 		let input;
@@ -765,12 +790,247 @@ describe('render()', () => {
 		});
 
 		// Before Preact rerenders, focus should be on the input
-		expect(document.activeElement).to.equal(input);
+		expect(document.activeElement).to.equalNode(input);
 
 		rerender();
 
 		// After Preact rerenders, focus should remain on the input
-		expect(document.activeElement).to.equal(input);
+		expect(document.activeElement).to.equalNode(input);
 		expect(scratch.innerHTML).to.contain(`<span>${todoText}</span>`);
 	});
+
+	it('should always diff `checked` and `value` properties against the DOM', () => {
+		// See https://github.com/preactjs/preact/issues/1324
+
+		let inputs;
+		let text;
+		let checkbox;
+
+		class Inputs extends Component {
+			render() {
+				return (
+					<div>
+						<input value={'Hello'} ref={el => text = el} />
+						<input type="checkbox" checked ref={el => checkbox = el} />
+					</div>
+				);
+			}
+		}
+
+		render(<Inputs ref={x => inputs = x} />, scratch);
+
+		expect(text.value).to.equal('Hello');
+		expect(checkbox.checked).to.equal(true);
+
+		text.value = 'World';
+		checkbox.checked = false;
+
+		inputs.forceUpdate();
+
+		expect(text.value).to.equal('Hello');
+		expect(checkbox.checked).to.equal(true);
+	});
+
+	it('should not re-render when a component returns undefined', () => {
+		let Dialog = () => undefined;
+		let updateState;
+		class App extends Component {
+			constructor(props) {
+				super(props);
+				this.state = { name: '' };
+				updateState = () => this.setState({ name: ', friend' });
+			}
+
+			render(props, { name }) {
+				return (
+					<div>
+						<Dialog />
+						<h1 class="fade-down">Hi{name}</h1>
+					</div>
+				);
+			}
+		}
+
+		render(<App />, scratch);
+		clearLog();
+
+		updateState();
+		rerender();
+
+		// We don't log text updates
+		expect(getLog()).to.deep.equal([]);
+	});
+
+	it('should not lead to stale DOM nodes', () => {
+		let i = 0;
+		let updateApp;
+		class App extends Component {
+			render() {
+				updateApp = () => this.forceUpdate();
+				return <Parent />;
+			}
+		}
+
+		let updateParent;
+		function Parent() {
+			updateParent = () => this.forceUpdate();
+			i++;
+			return <Child i={i} />;
+		}
+
+		function Child({ i }) {
+			return i < 3 ? null : <div>foo</div>;
+		}
+
+		render(<App />, scratch);
+
+		updateApp();
+		updateParent();
+		updateApp();
+
+		// Without a fix it would render: `<div>foo</div><div></div>`
+		expect(scratch.innerHTML).to.equal('<div>foo</div>');
+	});
+
+	// see preact/#1327
+	it('should not reuse unkeyed components', () => {
+		class X extends Component {
+			constructor() {
+				super();
+				this.state = { i: 0 };
+			}
+
+			update() {
+				this.setState(prev => ({ i: prev.i + 1 }));
+			}
+
+			componentWillUnmount() {
+				clearTimeout(this.id);
+			}
+
+			render() {
+				return <div>{this.state.i}</div>;
+			}
+		}
+
+		let ref;
+		let updateApp;
+		class App extends Component {
+			constructor() {
+				super();
+				this.state = { i: 0 };
+				updateApp = () => this.setState(prev => ({ i: prev.i ^ 1 }));
+			}
+
+			render() {
+				return (
+					<div>
+						{this.state.i === 0 && <X />}
+						<X ref={node => ref = node} />
+					</div>
+				);
+			}
+		}
+
+		render(<App />, scratch);
+		expect(scratch.textContent).to.equal('00');
+
+		ref.update();
+		updateApp();
+		rerender();
+		expect(scratch.textContent).to.equal('1');
+
+		updateApp();
+		rerender();
+
+		expect(scratch.textContent).to.equal('01');
+	});
+
+	it('should not cause infinite loop with referentially equal props', () => {
+		let i = 0;
+		let prevDiff = options._diff;
+		options._diff = () => {
+			if (++i > 10) {
+				options._diff = prevDiff;
+				throw new Error('Infinite loop');
+			}
+		};
+
+		function App({ children, ...rest }) {
+			return (
+				<div {...rest}>
+					<div {...rest}>{children}</div>
+				</div>
+			);
+		}
+
+		render(<App>10</App>, scratch);
+		expect(scratch.textContent).to.equal('10');
+		options._diff = prevDiff;
+	});
+
+	describe('replaceNode parameter', () => {
+
+		function appendChildToScratch(id) {
+			const child = document.createElement('div');
+			child.id = id;
+			scratch.appendChild(child);
+		}
+
+		beforeEach(() => {
+			['a', 'b', 'c'].forEach(id => appendChildToScratch(id));
+		});
+
+		it('should use replaceNode as render root and not inject into it', () => {
+			const childA = scratch.querySelector('#a');
+			render(<div id="a">contents</div>, scratch, childA);
+			expect(scratch.querySelector('#a')).to.equalNode(childA);
+			expect(childA.innerHTML).to.equal('contents');
+		});
+
+		it('should not remove siblings of replaceNode', () => {
+			const childA = scratch.querySelector('#a');
+			render(<div id="a" />, scratch, childA);
+			expect(scratch.innerHTML).to.equal('<div id="a"></div><div id="b"></div><div id="c"></div>');
+		});
+
+		it('should unmount existing components', () => {
+			const newScratch = setupScratch();
+			const unmount = sinon.spy();
+			const mount = sinon.spy();
+			class App extends Component {
+				componentDidMount() {
+					mount();
+				}
+
+				componentWillUnmount() {
+					unmount();
+				}
+
+				render() {
+					return <div>App</div>;
+				}
+			}
+			render(<div id="a"><App /></div>, newScratch);
+			expect(newScratch.innerHTML).to.equal('<div id="a"><div>App</div></div>');
+			expect(mount).to.be.calledOnce;
+			render(<div id="a">new</div>, newScratch, newScratch.querySelector('#a'));
+			expect(newScratch.innerHTML).to.equal('<div id="a">new</div>');
+			expect(unmount).to.be.calledOnce;
+		});
+
+		it('should render multiple render roots in one parentDom', () => {
+			const childA = scratch.querySelector('#a');
+			const childB = scratch.querySelector('#b');
+			const childC = scratch.querySelector('#c');
+			const expectedA = '<div id="a">childA</div>';
+			const expectedB = '<div id="b">childB</div>';
+			const expectedC = '<div id="c">childC</div>';
+			render(<div id="a">childA</div>, scratch, childA);
+			render(<div id="b">childB</div>, scratch, childB);
+			render(<div id="c">childC</div>, scratch, childC);
+			expect(scratch.innerHTML).to.equal(`${expectedA}${expectedB}${expectedC}`);
+		});
+	});
+
 });

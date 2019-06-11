@@ -22,8 +22,9 @@ var sauceLabsLaunchers = {
 	},
 	sl_safari: {
 		base: 'SauceLabs',
-		browserName: 'safari',
-		platform: 'OS X 10.11'
+		browserName: 'Safari',
+		version: '11',
+		platform: 'OS X 10.13'
 	},
 	sl_edge: {
 		base: 'SauceLabs',
@@ -126,13 +127,14 @@ module.exports = function(config) {
 						exclude: /node_modules/,
 						loader: 'babel-loader',
 						options: {
-							comments: false,
-							compact: true,
+							// comments: false,
+							// compact: true,
 							plugins: coverage ?
 								[['istanbul', {
 									exclude: [
 										// Default config
 										'coverage/**',
+										'dist/**',
 										'test/**',
 										'test{,-*}.js',
 										'**/*.test.js',
@@ -151,6 +153,7 @@ module.exports = function(config) {
 				// rather than referencing source files inside the module
 				// directly
 				alias: {
+					'preact/compat': path.join(__dirname, './compat/src'),
 					'preact/hooks': path.join(__dirname, './hooks/src'),
 					'preact/test-utils': path.join(__dirname, './test-utils/src'),
 					preact: path.join(__dirname, './src')

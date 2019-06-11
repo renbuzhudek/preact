@@ -5,10 +5,11 @@ import React, {
 	findDOMNode,
 	Component,
 	unmountComponentAtNode,
-	createFactory
+	createFactory,
+	unstable_batchedUpdates
 } from '../../src';
 import { createElement as preactH } from 'preact';
-import { setupScratch, teardown } from '../../../test/_util/helpers';
+import { setupScratch, teardown, createEvent } from '../../../test/_util/helpers';
 
 let ce = type => document.createElement(type);
 let text = text => document.createTextNode(text);
@@ -176,7 +177,7 @@ describe('preact-compat', () => {
 		it('should normalize beforeinput event listener', () => {
 			let spy = sinon.spy();
 			render(<input onBeforeInput={spy} />, scratch);
-			scratch.firstChild.dispatchEvent(new Event('beforeinput'));
+			scratch.firstChild.dispatchEvent(createEvent('beforeinput'));
 			expect(spy).to.be.calledOnce;
 		});
 	});
@@ -269,7 +270,7 @@ describe('preact-compat', () => {
 
 		it('should return a regular DOM Element if given a regular DOM Element', () => {
 			let scratch = document.createElement('div');
-			expect(findDOMNode(scratch)).to.equal(scratch);
+			expect(findDOMNode(scratch)).to.equalNode(scratch);
 		}),
 
 		// NOTE: React.render() returning false or null has the component pointing
@@ -299,6 +300,20 @@ describe('preact-compat', () => {
 		it('should do nothing if root is not mounted', () => {
 			expect(unmountComponentAtNode(scratch)).to.equal(false);
 			expect(scratch.innerHTML).to.equal('');
+		});
+	});
+
+	describe('unstable_batchedUpdates', () => {
+		it('should call the callback', () => {
+			const spy = sinon.spy();
+			unstable_batchedUpdates(spy);
+			expect(spy).to.be.calledOnce;
+		});
+
+		it('should call callback with only one arg', () => {
+			const spy = sinon.spy();
+			unstable_batchedUpdates(spy, 'foo', 'bar');
+			expect(spy).to.be.calledWithExactly('foo');
 		});
 	});
 
