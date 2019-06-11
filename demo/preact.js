@@ -6,7 +6,7 @@ options.vnode = vnode => {
 	vnode.children = vnode._children || [].concat(vnode.props.children || []);
 };
 
-
+//
 function asArray(arr) {
 	return Array.isArray(arr) ? arr : [arr];
 }
