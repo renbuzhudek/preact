@@ -1,6 +1,6 @@
 import { createElement as h, render, createPortal, useState, Component } from '../../src';
-import { setupScratch } from '../../../test/_util/helpers';
-import { setupRerender, teardown } from 'preact/test-utils';
+import { setupScratch, teardown } from '../../../test/_util/helpers';
+import { setupRerender } from 'preact/test-utils';
 /* eslint-disable react/jsx-boolean-value, react/display-name, prefer-arrow-callback */
 
 /** @jsx h */
@@ -29,6 +29,8 @@ describe('Portal', () => {
 		render(<Foo>foobar</Foo>, scratch);
 
 		expect(root.innerHTML).to.equal('foobar');
+
+		root.parentNode.removeChild(root);
 	});
 
 	it('should insert the portal', () => {
@@ -81,7 +83,7 @@ describe('Portal', () => {
 		let set;
 
 		function Foo(props) {
-			const [additionalProps, setProps] = useState({ style: { background: 'red' } });
+			const [additionalProps, setProps] = useState({ style: { backgroundColor: 'red' } });
 			set = (c) => setProps(c);
 			return (
 				<div>
@@ -92,11 +94,11 @@ describe('Portal', () => {
 		}
 
 		render(<Foo />, scratch);
-		expect(scratch.firstChild.style.background).to.equal('red');
+		expect(scratch.firstChild.style.backgroundColor).to.equal('red');
 
 		set({});
 		rerender();
-		expect(scratch.firstChild.style.background).to.equal('');
+		expect(scratch.firstChild.style.backgroundColor).to.equal('');
 	});
 
 	it('should not unmount the portal component', () => {
