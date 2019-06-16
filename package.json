@@ -141,5 +141,8 @@
     "travis-size-report": "^1.0.1",
     "typescript": "^3.0.1",
     "webpack": "^4.3.0"
+  },
+  "dependencies": {
+    "nyc": "^14.1.1"
   }
 }
